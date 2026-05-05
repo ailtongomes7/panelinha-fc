@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 import PlayerActions from "./PlayerActions";
@@ -25,7 +25,7 @@ type Group = {
   name: string;
 };
 
-export default function PlayersPage() {
+function PlayersContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const groupIdFromUrl = searchParams.get("groupId") || "";
@@ -372,6 +372,14 @@ export default function PlayersPage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function PlayersPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando jogadores...</main>}>
+      <PlayersContent />
+    </Suspense>
   );
 }
 

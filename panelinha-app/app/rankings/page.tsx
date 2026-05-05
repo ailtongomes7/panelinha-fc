@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type Session = {
   id: string;
@@ -48,9 +48,10 @@ type RankingRow = {
   average: number;
 };
 
-export default function RankingsPage() {
+function RankingsContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const groupId = searchParams.get("groupId") || "";
+  const groupIdFromUrl = searchParams.get("groupId") || "";
 
   const [group, setGroup] = useState<Group | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -65,58 +66,100 @@ export default function RankingsPage() {
 
   useEffect(() => {
     loadData();
-  }, [groupId]);
+  }, [groupIdFromUrl]);
 
   async function loadData() {
     setLoading(true);
     setMessage("");
 
-    let groupData: Group | null = null;
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
-    if (groupId) {
-      const { data, error } = await supabase
-        .from("groups")
-        .select("id, name")
-        .eq("id", groupId)
+    if (userError || !user) {
+      router.push("/auth/login");
+      return;
+    }
+
+    let finalGroupId = groupIdFromUrl;
+
+    if (!finalGroupId) {
+      const { data: firstMembership, error: membershipError } = await supabase
+        .from("group_members")
+        .select("group_id")
+        .eq("user_id", user.id)
+        .limit(1)
         .maybeSingle();
 
-      if (error) {
-        setMessage(`Erro ao carregar grupo: ${error.message}`);
+      if (membershipError) {
+        setMessage(`Erro ao carregar grupo: ${membershipError.message}`);
+        setLoading(false);
+        return;
       }
 
-      groupData = data;
-      setGroup(data || null);
-    } else {
-      setGroup(null);
+      if (!firstMembership?.group_id) {
+        setMessage("Nenhum grupo vinculado à sua conta.");
+        setLoading(false);
+        return;
+      }
+
+      finalGroupId = firstMembership.group_id;
     }
 
-    let sessionsQuery = supabase
+    const { data: membership, error: membershipCheckError } = await supabase
+      .from("group_members")
+      .select("group_id")
+      .eq("group_id", finalGroupId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (membershipCheckError) {
+      setMessage(`Erro ao verificar acesso ao grupo: ${membershipCheckError.message}`);
+      setLoading(false);
+      return;
+    }
+
+    if (!membership) {
+      setMessage("Você não tem acesso a este grupo.");
+      setLoading(false);
+      return;
+    }
+
+    const { data: groupData, error: groupError } = await supabase
+      .from("groups")
+      .select("id, name")
+      .eq("id", finalGroupId)
+      .maybeSingle();
+
+    if (groupError) {
+      setMessage(`Erro ao carregar grupo: ${groupError.message}`);
+      setLoading(false);
+      return;
+    }
+
+    const { data: sessionsData, error: sessionsError } = await supabase
       .from("sessions")
       .select("id, name, starts_at, location, group_id")
+      .eq("group_id", finalGroupId)
       .order("starts_at", { ascending: false });
 
-    if (groupId) {
-      sessionsQuery = sessionsQuery.eq("group_id", groupId);
-    }
-
-    let playersQuery = supabase
+    const { data: playersData, error: playersError } = await supabase
       .from("players")
       .select("id, name, nickname, role, participation, group_id")
+      .eq("group_id", finalGroupId)
       .order("nickname");
-
-    if (groupId) {
-      playersQuery = playersQuery.eq("group_id", groupId);
-    }
-
-    const { data: sessionsData, error: sessionsError } = await sessionsQuery;
-    const { data: playersData, error: playersError } = await playersQuery;
 
     if (sessionsError) {
       setMessage(`Erro ao carregar horários: ${sessionsError.message}`);
+      setLoading(false);
+      return;
     }
 
     if (playersError) {
       setMessage(`Erro ao carregar jogadores: ${playersError.message}`);
+      setLoading(false);
+      return;
     }
 
     const sessionIds = (sessionsData || []).map((session) => session.id);
@@ -131,14 +174,17 @@ export default function RankingsPage() {
 
       if (error) {
         setMessage(`Erro ao carregar pontuação: ${error.message}`);
+        setLoading(false);
+        return;
       }
 
       pointsData = data || [];
     }
 
-    setSessions(sessionsData || []);
-    setPlayers(playersData || []);
-    setPoints(pointsData || []);
+    setGroup(groupData || null);
+    setSessions((sessionsData || []) as Session[]);
+    setPlayers((playersData || []) as Player[]);
+    setPoints(pointsData);
 
     if (sessionsData && sessionsData.length > 0) {
       setSelectedSessionId(sessionsData[0].id);
@@ -281,7 +327,7 @@ export default function RankingsPage() {
               : "Acompanhe a classificação por horário, mês ou ano."}
           </p>
 
-          {groupId && (
+          {group && (
             <div
               style={{
                 background: "rgba(255,255,255,0.18)",
@@ -292,22 +338,20 @@ export default function RankingsPage() {
                 fontWeight: 800,
               }}
             >
-              Grupo filtrado: {group?.name || groupId}
+              Grupo filtrado: {group.name}
             </div>
           )}
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {groupId && (
-              <a href={`/groups/${groupId}`} style={{ textDecoration: "none" }}>
+            {group && (
+              <a href={`/groups/${group.id}`} style={{ textDecoration: "none" }}>
                 <button style={heroButton}>Voltar ao grupo</button>
               </a>
             )}
 
-            {!groupId && (
-              <a href="/groups" style={{ textDecoration: "none" }}>
-                <button style={heroButton}>Ver grupos</button>
-              </a>
-            )}
+            <a href="/groups" style={{ textDecoration: "none" }}>
+              <button style={heroButton}>Ver grupos</button>
+            </a>
           </div>
         </section>
 
@@ -590,6 +634,14 @@ export default function RankingsPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function RankingsPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando ranking...</main>}>
+      <RankingsContent />
+    </Suspense>
   );
 }
 

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function NewPlayerPage() {
+function NewPlayerContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const groupIdFromUrl = searchParams.get("groupId");
@@ -393,6 +393,14 @@ export default function NewPlayerPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function NewPlayerPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando grupo...</main>}>
+      <NewPlayerContent />
+    </Suspense>
   );
 }
 

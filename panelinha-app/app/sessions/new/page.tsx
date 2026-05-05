@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function NewSessionPage() {
+function NewSessionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const groupIdFromUrl = searchParams.get("groupId");
@@ -243,7 +243,21 @@ export default function NewSessionPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+export default function NewSessionPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando grupo...</main>}>
+      <NewSessionContent />
+    </Suspense>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <label style={{ display: "grid", gap: 8 }}>
       <span style={{ color: "#7a0000", fontWeight: 900, fontSize: 15 }}>

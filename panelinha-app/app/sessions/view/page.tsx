@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
 
@@ -56,7 +56,7 @@ type DayRankingRow = {
   matches: number;
 };
 
-export default function SessionViewPage() {
+function SessionViewContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("id");
 
@@ -1267,6 +1267,13 @@ export default function SessionViewPage() {
   );
 }
 
+export default function SessionViewPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando horário...</main>}>
+      <SessionViewContent />
+    </Suspense>
+  );
+}
 function TeamCard({
   title,
   players,

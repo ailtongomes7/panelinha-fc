@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -15,7 +15,7 @@ type Session = {
   status: string;
 };
 
-export default function EditSessionPage() {
+function EditSessionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -44,6 +44,15 @@ export default function EditSessionPage() {
       return;
     }
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/auth/login");
+      return;
+    }
+
     const { data, error } = await supabase
       .from("sessions")
       .select("*")
@@ -51,12 +60,27 @@ export default function EditSessionPage() {
       .single();
 
     if (error || !data) {
-      setMessage("Horário não encontrado.");
+      setMessage(`Erro ao carregar horário: ${error?.message || "não encontrado"}`);
       setLoading(false);
       return;
     }
 
     const sessionData = data as Session;
+
+    if (sessionData.group_id) {
+      const { data: membership } = await supabase
+        .from("group_members")
+        .select("group_id")
+        .eq("group_id", sessionData.group_id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (!membership) {
+        setMessage("Você não tem acesso a este horário.");
+        setLoading(false);
+        return;
+      }
+    }
 
     setSession(sessionData);
     setName(sessionData.name || "");
@@ -119,31 +143,33 @@ export default function EditSessionPage() {
   }
 
   if (!session) {
-    return <main style={{ padding: 24 }}>{message || "Horário não encontrado."}</main>;
+    return (
+      <main style={pageStyle}>
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <section style={cardStyle}>
+            <h1 style={{ color: "#b71c1c", marginTop: 0 }}>
+              Horário não encontrado
+            </h1>
+
+            <p style={{ color: "#666", fontWeight: 700 }}>
+              {message || "Não foi possível carregar este horário."}
+            </p>
+
+            <a href="/groups" style={{ textDecoration: "none" }}>
+              <button style={primaryButton}>Voltar para grupos</button>
+            </a>
+          </section>
+        </div>
+      </main>
+    );
   }
 
   const isFinished = session.status === "finished";
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "linear-gradient(180deg, #fff8e1 0%, #ffffff 100%)",
-        padding: "32px 20px",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
+    <main style={pageStyle}>
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <section
-          style={{
-            background: "linear-gradient(135deg, #FF2800 0%, #FF6A00 100%)",
-            color: "#fff",
-            borderRadius: 22,
-            padding: 28,
-            marginBottom: 24,
-            boxShadow: "0 10px 30px rgba(255, 40, 0, 0.25)",
-          }}
-        >
+        <section style={heroStyle}>
           <h1 style={{ margin: 0, fontSize: 38, fontWeight: 900 }}>
             Editar horário
           </h1>
@@ -153,15 +179,7 @@ export default function EditSessionPage() {
           </p>
         </section>
 
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: 22,
-            padding: 28,
-            border: "2px solid #ffe082",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.08)",
-          }}
-        >
+        <section style={cardStyle}>
           {message && (
             <div
               style={{
@@ -306,6 +324,14 @@ export default function EditSessionPage() {
   );
 }
 
+export default function EditSessionPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando horário...</main>}>
+      <EditSessionContent />
+    </Suspense>
+  );
+}
+
 function formatDateTimeLocal(value: string) {
   const date = new Date(value);
   const offset = date.getTimezoneOffset();
@@ -335,6 +361,30 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} style={{ ...inputStyle, ...(props.style || {}) }} />;
 }
 
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "linear-gradient(180deg, #fff8e1 0%, #ffffff 100%)",
+  padding: "32px 20px",
+  fontFamily: "Arial, sans-serif",
+};
+
+const heroStyle: React.CSSProperties = {
+  background: "linear-gradient(135deg, #FF2800 0%, #FF6A00 100%)",
+  color: "#fff",
+  borderRadius: 22,
+  padding: 28,
+  marginBottom: 24,
+  boxShadow: "0 10px 30px rgba(255, 40, 0, 0.25)",
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#fff",
+  borderRadius: 22,
+  padding: 28,
+  border: "2px solid #ffe082",
+  boxShadow: "0 8px 22px rgba(0,0,0,0.08)",
+};
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "13px 15px",
@@ -343,4 +393,15 @@ const inputStyle: React.CSSProperties = {
   fontSize: 16,
   outline: "none",
   boxSizing: "border-box",
+};
+
+const primaryButton: React.CSSProperties = {
+  background: "#FFCA28",
+  color: "#7a0000",
+  border: "none",
+  borderRadius: 14,
+  padding: "14px 18px",
+  fontWeight: 900,
+  fontSize: 16,
+  cursor: "pointer",
 };

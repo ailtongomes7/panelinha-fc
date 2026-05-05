@@ -1,24 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function EditPlayerPage() {
+type Player = {
+  id: string;
+  group_id: string | null;
+  name: string;
+  nickname: string;
+  role: string;
+  participation: string;
+  attack: number | null;
+  defense: number | null;
+  intensity: number | null;
+  overall: number | null;
+  active: boolean;
+  photo_url: string | null;
+};
+
+function EditPlayerContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const id = searchParams.get("id");
 
+  const playerId = searchParams.get("id");
+
+  const [player, setPlayer] = useState<Player | null>(null);
   const [groupId, setGroupId] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
 
   const [name, setName] = useState("");
   const [nickname, setNickname] = useState("");
-  const [currentPhotoUrl, setCurrentPhotoUrl] = useState("");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState("");
   const [role, setRole] = useState("line");
   const [participation, setParticipation] = useState("official");
   const [attack, setAttack] = useState(3);
@@ -26,44 +37,79 @@ export default function EditPlayerPage() {
   const [intensity, setIntensity] = useState(3);
   const [active, setActive] = useState(true);
 
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   const showAttributes = role === "line" && participation === "official";
 
   useEffect(() => {
-    async function loadPlayer() {
-      if (!id) {
-        setMessage("ID do jogador não informado.");
-        setLoading(false);
-        return;
-      }
+    loadPlayer();
+  }, [playerId]);
 
-      const { data, error } = await supabase
-        .from("players")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error || !data) {
-        setMessage("Jogador não encontrado.");
-        setLoading(false);
-        return;
-      }
-
-      setGroupId(data.group_id || "");
-      setName(data.name || "");
-      setNickname(data.nickname || "");
-      setCurrentPhotoUrl(data.photo_url || "");
-      setPhotoPreview(data.photo_url || "");
-      setRole(data.role || "line");
-      setParticipation(data.participation || "official");
-      setAttack(data.attack ?? 3);
-      setDefense(data.defense ?? 3);
-      setIntensity(data.intensity ?? 3);
-      setActive(data.active ?? true);
+  async function loadPlayer() {
+    if (!playerId) {
+      setMessage("ID do jogador não informado.");
       setLoading(false);
+      return;
     }
 
-    loadPlayer();
-  }, [id]);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/auth/login");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("players")
+      .select("*")
+      .eq("id", playerId)
+      .single();
+
+    if (error || !data) {
+      setMessage(`Erro ao carregar jogador: ${error?.message || "não encontrado"}`);
+      setLoading(false);
+      return;
+    }
+
+    const playerData = data as Player;
+
+    if (playerData.group_id) {
+      const { data: membership } = await supabase
+        .from("group_members")
+        .select("group_id")
+        .eq("group_id", playerData.group_id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (!membership) {
+        setMessage("Você não tem acesso a este jogador.");
+        setLoading(false);
+        return;
+      }
+    }
+
+    setPlayer(playerData);
+    setGroupId(playerData.group_id || "");
+    setName(playerData.name || "");
+    setNickname(playerData.nickname || "");
+    setRole(playerData.role || "line");
+    setParticipation(playerData.participation || "official");
+    setAttack(playerData.attack || 3);
+    setDefense(playerData.defense || 3);
+    setIntensity(playerData.intensity || 3);
+    setActive(playerData.active ?? true);
+    setPhotoUrl(playerData.photo_url || "");
+    setPhotoPreview(playerData.photo_url || "");
+    setLoading(false);
+  }
 
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -85,9 +131,10 @@ export default function EditPlayerPage() {
   }
 
   async function uploadPhoto(playerName: string) {
-    if (!photoFile || !groupId) return currentPhotoUrl || null;
+    if (!photoFile || !groupId) return photoUrl || null;
 
     const extension = photoFile.name.split(".").pop();
+
     const safeName = playerName
       .toLowerCase()
       .normalize("NFD")
@@ -114,19 +161,13 @@ export default function EditPlayerPage() {
     return data.publicUrl;
   }
 
-  async function removePhoto() {
-    const confirmRemove = confirm("Deseja remover a foto deste jogador?");
-    if (!confirmRemove) return;
-
-    setCurrentPhotoUrl("");
-    setPhotoPreview("");
-    setPhotoFile(null);
-  }
-
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!id) return;
+    if (!playerId || !player) {
+      setMessage("Jogador não carregado.");
+      return;
+    }
 
     try {
       setSaving(true);
@@ -139,15 +180,15 @@ export default function EditPlayerPage() {
         .update({
           name,
           nickname,
-          photo_url: uploadedPhotoUrl,
           role,
           participation,
           attack: showAttributes ? attack : null,
           defense: showAttributes ? defense : null,
           intensity: showAttributes ? intensity : null,
+          photo_url: uploadedPhotoUrl,
           active,
         })
-        .eq("id", id);
+        .eq("id", playerId);
 
       if (error) {
         setMessage(`Erro ao atualizar jogador: ${error.message}`);
@@ -155,9 +196,9 @@ export default function EditPlayerPage() {
         return;
       }
 
-      router.push("/players");
+      router.push(groupId ? `/players?groupId=${groupId}` : "/players");
     } catch (error: any) {
-      setMessage(`Erro ao enviar foto: ${error.message}`);
+      setMessage(`Erro ao salvar jogador: ${error.message}`);
       setSaving(false);
     }
   }
@@ -166,65 +207,50 @@ export default function EditPlayerPage() {
     return <main style={{ padding: 24 }}>Carregando jogador...</main>;
   }
 
+  if (!player) {
+    return (
+      <main style={pageStyle}>
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <section style={cardStyle}>
+            <h1 style={{ color: "#b71c1c", marginTop: 0 }}>
+              Jogador não encontrado
+            </h1>
+
+            <p style={{ color: "#666", fontWeight: 700 }}>
+              {message || "Não foi possível carregar este jogador."}
+            </p>
+
+            <a href="/groups" style={{ textDecoration: "none" }}>
+              <button style={primaryButton}>Voltar para grupos</button>
+            </a>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "linear-gradient(180deg, #fff8e1 0%, #ffffff 100%)",
-        padding: "32px 20px",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
+    <main style={pageStyle}>
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <section
-          style={{
-            background: "linear-gradient(135deg, #FF2800 0%, #FF6A00 100%)",
-            color: "#fff",
-            borderRadius: 22,
-            padding: 28,
-            marginBottom: 24,
-            boxShadow: "0 10px 30px rgba(255, 40, 0, 0.25)",
-          }}
-        >
+        <section style={heroStyle}>
           <h1 style={{ margin: 0, fontSize: 38, fontWeight: 900 }}>
             Editar Jogador
           </h1>
 
           <p style={{ marginTop: 10, marginBottom: 0, fontSize: 17 }}>
-            Atualize dados, foto, nível e status do jogador.
+            Atualize dados, nível, foto e situação do jogador.
           </p>
         </section>
 
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: 22,
-            padding: 28,
-            border: "2px solid #ffe082",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.08)",
-          }}
-        >
-          {message && (
-            <div
-              style={{
-                marginBottom: 16,
-                background: "#fff0f0",
-                border: "1px solid #ffb3b3",
-                color: "#b00020",
-                borderRadius: 12,
-                padding: 12,
-                fontWeight: 800,
-              }}
-            >
-              {message}
-            </div>
-          )}
+        <section style={cardStyle}>
+          {message && <MessageBox message={message} />}
 
           <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
             <Field label="Nome completo">
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                placeholder="Ex.: Ailton Gomes"
                 required
               />
             </Field>
@@ -233,11 +259,12 @@ export default function EditPlayerPage() {
               <Input
                 value={nickname}
                 onChange={(e) => setNickname(e.target.value)}
+                placeholder="Ex.: AG7"
                 required
               />
             </Field>
 
-            <Field label="Trocar foto do jogador">
+            <Field label="Foto do jogador">
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
@@ -260,10 +287,10 @@ export default function EditPlayerPage() {
               {photoPreview ? (
                 <img
                   src={photoPreview}
-                  alt={nickname}
+                  alt="Prévia"
                   style={{
-                    width: 70,
-                    height: 70,
+                    width: 76,
+                    height: 76,
                     borderRadius: "50%",
                     objectFit: "cover",
                     border: "3px solid #FFCA28",
@@ -272,8 +299,8 @@ export default function EditPlayerPage() {
               ) : (
                 <div
                   style={{
-                    width: 70,
-                    height: 70,
+                    width: 76,
+                    height: 76,
                     borderRadius: "50%",
                     background: "#fff",
                     border: "3px solid #FFCA28",
@@ -289,29 +316,9 @@ export default function EditPlayerPage() {
                 </div>
               )}
 
-              <div style={{ display: "grid", gap: 8 }}>
-                <strong style={{ color: "#7a0000" }}>
-                  {photoPreview ? "Foto atual / prévia" : "Sem foto cadastrada"}
-                </strong>
-
-                {photoPreview && (
-                  <button
-                    type="button"
-                    onClick={removePhoto}
-                    style={{
-                      background: "#fff",
-                      color: "#FF2800",
-                      border: "1px solid #FF2800",
-                      borderRadius: 10,
-                      padding: "7px 10px",
-                      fontWeight: 800,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Remover foto
-                  </button>
-                )}
-              </div>
+              <strong style={{ color: "#7a0000" }}>
+                {photoPreview ? "Foto atual / prévia" : "Sem foto"}
+              </strong>
             </div>
 
             <div
@@ -387,54 +394,23 @@ export default function EditPlayerPage() {
               </div>
             )}
 
-            <label
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                background: "#fff8e1",
-                border: "1px solid #ffd54f",
-                borderRadius: 14,
-                padding: 14,
-                color: "#7a0000",
-                fontWeight: 900,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={active}
-                onChange={(e) => setActive(e.target.checked)}
-              />
-              Jogador ativo
-            </label>
+            <Field label="Situação">
+              <select
+                value={active ? "active" : "inactive"}
+                onChange={(e) => setActive(e.target.value === "active")}
+                style={inputStyle}
+              >
+                <option value="active">Ativo</option>
+                <option value="inactive">Inativo</option>
+              </select>
+            </Field>
 
-            <button
-              type="submit"
-              disabled={saving}
-              style={{
-                background: saving ? "#ddd" : "#FFCA28",
-                color: saving ? "#777" : "#7a0000",
-                border: "none",
-                borderRadius: 14,
-                padding: "14px 18px",
-                fontWeight: 900,
-                fontSize: 16,
-                cursor: saving ? "not-allowed" : "pointer",
-                marginTop: 8,
-              }}
-            >
+            <button type="submit" disabled={saving} style={primaryButton}>
               {saving ? "Salvando..." : "Salvar alterações"}
             </button>
 
-            <a
-              href="/players"
-              style={{
-                color: "#b71c1c",
-                fontWeight: 800,
-                textDecoration: "none",
-              }}
-            >
-              Voltar para jogadores
+            <a href={`/players?groupId=${groupId}`} style={linkStyle}>
+              Voltar para jogadores do grupo
             </a>
           </form>
         </section>
@@ -443,13 +419,15 @@ export default function EditPlayerPage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+export default function EditPlayerPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando jogador...</main>}>
+      <EditPlayerContent />
+    </Suspense>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={{ display: "grid", gap: 8 }}>
       <span style={{ color: "#7a0000", fontWeight: 900, fontSize: 15 }}>
@@ -464,6 +442,50 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} style={{ ...inputStyle, ...(props.style || {}) }} />;
 }
 
+function MessageBox({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        background: message.startsWith("Erro") ? "#fff0f0" : "#fff8e1",
+        border: message.startsWith("Erro")
+          ? "1px solid #ffb3b3"
+          : "1px solid #ffd54f",
+        color: message.startsWith("Erro") ? "#b00020" : "#5d4037",
+        borderRadius: 12,
+        padding: 12,
+        fontWeight: 800,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "linear-gradient(180deg, #fff8e1 0%, #ffffff 100%)",
+  padding: "32px 20px",
+  fontFamily: "Arial, sans-serif",
+};
+
+const heroStyle: React.CSSProperties = {
+  background: "linear-gradient(135deg, #FF2800 0%, #FF6A00 100%)",
+  color: "#fff",
+  borderRadius: 22,
+  padding: 28,
+  marginBottom: 24,
+  boxShadow: "0 10px 30px rgba(255, 40, 0, 0.25)",
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#fff",
+  borderRadius: 22,
+  padding: 28,
+  border: "2px solid #ffe082",
+  boxShadow: "0 8px 22px rgba(0,0,0,0.08)",
+};
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "13px 15px",
@@ -472,4 +494,22 @@ const inputStyle: React.CSSProperties = {
   fontSize: 16,
   outline: "none",
   boxSizing: "border-box",
+};
+
+const primaryButton: React.CSSProperties = {
+  background: "#FFCA28",
+  color: "#7a0000",
+  border: "none",
+  borderRadius: 14,
+  padding: "14px 18px",
+  fontWeight: 900,
+  fontSize: 16,
+  cursor: "pointer",
+};
+
+const linkStyle: React.CSSProperties = {
+  color: "#b71c1c",
+  fontWeight: 900,
+  textDecoration: "none",
+  textAlign: "center",
 };

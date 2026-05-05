@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 import SessionActions from "./SessionActions";
@@ -21,7 +21,7 @@ type Group = {
   name: string;
 };
 
-export default function SessionsPage() {
+function SessionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const groupIdFromUrl = searchParams.get("groupId") || "";
@@ -298,6 +298,14 @@ export default function SessionsPage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function SessionsPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Carregando horários...</main>}>
+      <SessionsContent />
+    </Suspense>
   );
 }
 
