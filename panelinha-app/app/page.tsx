@@ -1,300 +1,219 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+type UserInfo = {
+  email: string | undefined;
+};
+
 export default function HomePage() {
-  const cards = [
-    {
-      title: "Jogadores",
-      description: "Visualizar todos os jogadores cadastrados no grupo.",
-      href: "/players",
-      buttonLabel: "Ver jogadores",
-    },
-    {
-      title: "Novo jogador",
-      description: "Cadastrar jogador oficial, convidado ou goleiro.",
-      href: "/players/new",
-      buttonLabel: "Cadastrar agora",
-    },
-    {
-     title: "Horários",
-     description: "Criar, visualizar e organizar os horários da pelada.",
-     href: "/sessions",
-     buttonLabel: "Ver horários",
-    },
-    {
-      title: "Times",
-      description: "Em breve: montagem automática e equilibrada dos times.",
-      href: "#",
-      buttonLabel: "Em breve",
-      disabled: true,
-    },
-  ];
+  const [user, setUser] = useState<UserInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      loadUser();
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function loadUser() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      setUser({ email: user.email });
+    } else {
+      setUser(null);
+    }
+
+    setLoading(false);
+  }
+
+  if (loading) {
+    return <main style={{ padding: 24 }}>Carregando...</main>;
+  }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "linear-gradient(180deg, #fff8e1 0%, #ffffff 100%)",
-        padding: "32px 20px",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 1150, margin: "0 auto" }}>
-        <section
-          style={{
-            background: "linear-gradient(135deg, #FF2800 0%, #FF2800 100%)",
-            color: "#fff",
-            borderRadius: 24,
-            padding: "32px 28px",
-            boxShadow: "0 12px 30px rgba(213, 0, 0, 0.24)",
-            marginBottom: 28,
-          }}
-        >
+    <main style={pageStyle}>
+      <div style={{ maxWidth: 1050, margin: "0 auto" }}>
+        <section style={heroStyle}>
+          <div
+            style={{
+              width: 82,
+              height: 82,
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #FFCA28 0%, #FF2800 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#7a0000",
+              fontWeight: 900,
+              fontSize: 30,
+              border: "4px solid #fff",
+              boxShadow: "0 10px 24px rgba(0,0,0,0.16)",
+              marginBottom: 18,
+            }}
+          >
+            FC
+          </div>
+
+          <h1 style={{ margin: 0, fontSize: 42, fontWeight: 900 }}>
+            Panelinha FC
+          </h1>
+
+          <p
+            style={{
+              marginTop: 12,
+              marginBottom: 0,
+              fontSize: 18,
+              lineHeight: 1.5,
+              maxWidth: 720,
+            }}
+          >
+            Organize sua pelada com grupos, jogadores, horários, sorteio de
+            times, controle de presença, ranking e resumo das partidas.
+          </p>
+
           <div
             style={{
               display: "flex",
-              justifyContent: "space-between",
-              gap: 20,
-              alignItems: "center",
+              gap: 12,
               flexWrap: "wrap",
+              marginTop: 24,
             }}
           >
-            <div>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 800,
-                  letterSpacing: 1.2,
-                  opacity: 0.9,
-                  marginBottom: 10,
-                  textTransform: "uppercase",
-                }}
-              >
-                Painel principal
-              </div>
+            {user ? (
+              <>
+                <a href="/groups" style={{ textDecoration: "none" }}>
+                  <button style={primaryHeroButton}>Abrir meus grupos</button>
+                </a>
 
-              <h1
-                style={{
-                  margin: 0,
-                  fontSize: 40,
-                  fontWeight: 900,
-                  lineHeight: 1.1,
-                }}
-              >
-                Panelinha FC
-              </h1>
+                <span style={loggedBadge}>
+                  Logado como {user.email}
+                </span>
+              </>
+            ) : (
+              <>
+                <a href="/auth/login" style={{ textDecoration: "none" }}>
+                  <button style={primaryHeroButton}>Entrar</button>
+                </a>
 
-              <p
-                style={{
-                  marginTop: 12,
-                  marginBottom: 0,
-                  maxWidth: 620,
-                  fontSize: 17,
-                  lineHeight: 1.6,
-                  opacity: 0.96,
-                }}
-              >
-                Sistema de gestão da pelada, com cadastro de jogadores,
-                controle do grupo e base pronta para evolução do sorteio,
-                partidas e ranking.
-              </p>
-            </div>
-
-            <div
-              style={{
-                background: "rgba(255,255,255,0.12)",
-                border: "1px solid rgba(255,255,255,0.18)",
-                borderRadius: 20,
-                padding: "18px 20px",
-                minWidth: 240,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 13,
-                  textTransform: "uppercase",
-                  fontWeight: 800,
-                  letterSpacing: 1,
-                  marginBottom: 10,
-                }}
-              >
-                Status do projeto
-              </div>
-
-              <div style={{ display: "grid", gap: 8 }}>
-                <StatusRow label="Supabase" value="Conectado" />
-                <StatusRow label="Cadastro" value="Funcionando" />
-                <StatusRow label="Listagem" value="Funcionando" />
-                <StatusRow label="Próximo módulo" value="Horários" />
-              </div>
-            </div>
+                <a href="/auth/signup" style={{ textDecoration: "none" }}>
+                  <button style={secondaryHeroButton}>Criar conta</button>
+                </a>
+              </>
+            )}
           </div>
         </section>
 
-        <section style={{ marginBottom: 28 }}>
-          <div
-            style={{
-              marginBottom: 16,
-              color: "#7a0000",
-              fontSize: 22,
-              fontWeight: 900,
-            }}
-          >
-            Acesso rápido
-          </div>
+        <section style={gridStyle}>
+          <InfoCard
+            title="Grupos separados"
+            text="Cada pelada fica em seu próprio grupo, com jogadores, horários e ranking separados."
+          />
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: 18,
-            }}
-          >
-            {cards.map((card) => (
-              <div
-                key={card.title}
-                style={{
-                  background: "#fff",
-                  borderRadius: 20,
-                  padding: 20,
-                  border: "2px solid #ffe082",
-                  boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "space-between",
-                  gap: 16,
-                }}
-              >
-                <div>
-                  <h2
-                    style={{
-                      margin: 0,
-                      fontSize: 22,
-                      color: "#FF2800",
-                      fontWeight: 900,
-                    }}
-                  >
-                    {card.title}
-                  </h2>
+          <InfoCard
+            title="Gestão do horário"
+            text="Marque presença, gere times, controle barreiras, registre vitórias, empates e derrotas."
+          />
 
-                  <p
-                    style={{
-                      marginTop: 10,
-                      marginBottom: 0,
-                      color: "#555",
-                      lineHeight: 1.6,
-                      fontSize: 15,
-                    }}
-                  >
-                    {card.description}
-                  </p>
-                </div>
+          <InfoCard
+            title="Ranking automático"
+            text="O app calcula pontuação por horário, mês e ano com critérios de desempate."
+          />
 
-                {card.disabled ? (
-                  <button
-                    disabled
-                    style={{
-                      background: "#f5f5f5",
-                      color: "#999",
-                      border: "1px solid #ddd",
-                      borderRadius: 12,
-                      padding: "12px 16px",
-                      fontWeight: 800,
-                      cursor: "not-allowed",
-                    }}
-                  >
-                    {card.buttonLabel}
-                  </button>
-                ) : (
-                  <a href={card.href} style={{ textDecoration: "none" }}>
-                    <button
-                      style={{
-                        width: "100%",
-                        background: "#ffca28",
-                        color: "#7a0000",
-                        border: "none",
-                        borderRadius: 12,
-                        padding: "12px 16px",
-                        fontWeight: 800,
-                        cursor: "pointer",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-                      }}
-                    >
-                      {card.buttonLabel}
-                    </button>
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section
-          style={{
-            background: "#fff",
-            borderRadius: 20,
-            padding: 24,
-            border: "2px solid #ffe082",
-            boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
-          }}
-        >
-          <h3
-            style={{
-              marginTop: 0,
-              marginBottom: 12,
-              color: "#FF2800",
-              fontSize: 22,
-              fontWeight: 900,
-            }}
-          >
-            Próximos passos do Panelinha FC
-          </h3>
-
-          <div style={{ display: "grid", gap: 12 }}>
-            <StepItem text="Criar módulo de horários da pelada" />
-            <StepItem text="Selecionar jogadores presentes" />
-            <StepItem text="Montar times equilibrados automaticamente" />
-            <StepItem text="Registrar partidas, vitórias, empates e derrotas" />
-            <StepItem text="Gerar ranking do dia, mês e ano" />
-          </div>
+          <InfoCard
+            title="Fotos e perfis"
+            text="Cada jogador pode ter foto, nível, função e dados básicos para facilitar a identificação."
+          />
         </section>
       </div>
     </main>
   );
 }
 
-function StatusRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function InfoCard({ title, text }: { title: string; text: string }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        gap: 12,
-        fontSize: 14,
-      }}
-    >
-      <span style={{ opacity: 0.92 }}>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <section style={cardStyle}>
+      <h2 style={{ marginTop: 0, color: "#b71c1c", fontSize: 22 }}>
+        {title}
+      </h2>
+
+      <p style={{ color: "#666", lineHeight: 1.5, marginBottom: 0 }}>
+        {text}
+      </p>
+    </section>
   );
 }
 
-function StepItem({ text }: { text: string }) {
-  return (
-    <div
-      style={{
-        background: "#fff8e1",
-        border: "1px solid #ffd54f",
-        borderRadius: 12,
-        padding: "12px 14px",
-        color: "#5d4037",
-        fontWeight: 700,
-      }}
-    >
-      {text}
-    </div>
-  );
-}
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "linear-gradient(180deg, #fff8e1 0%, #ffffff 100%)",
+  padding: "32px 20px",
+  fontFamily: "Arial, sans-serif",
+};
+
+const heroStyle: React.CSSProperties = {
+  background: "linear-gradient(135deg, #FF2800 0%, #FF6A00 100%)",
+  color: "#fff",
+  borderRadius: 28,
+  padding: 34,
+  marginBottom: 24,
+  boxShadow: "0 12px 34px rgba(255, 40, 0, 0.25)",
+};
+
+const primaryHeroButton: React.CSSProperties = {
+  background: "#FFCA28",
+  color: "#7a0000",
+  border: "none",
+  borderRadius: 14,
+  padding: "14px 20px",
+  fontWeight: 900,
+  fontSize: 16,
+  cursor: "pointer",
+};
+
+const secondaryHeroButton: React.CSSProperties = {
+  background: "#fff",
+  color: "#7a0000",
+  border: "none",
+  borderRadius: 14,
+  padding: "14px 20px",
+  fontWeight: 900,
+  fontSize: 16,
+  cursor: "pointer",
+};
+
+const loggedBadge: React.CSSProperties = {
+  background: "rgba(255,255,255,0.18)",
+  border: "1px solid rgba(255,255,255,0.36)",
+  color: "#fff",
+  borderRadius: 999,
+  padding: "13px 16px",
+  fontWeight: 800,
+  fontSize: 14,
+};
+
+const gridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+  gap: 18,
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#fff",
+  borderRadius: 20,
+  padding: 22,
+  border: "2px solid #ffe082",
+  boxShadow: "0 8px 22px rgba(0,0,0,0.08)",
+};

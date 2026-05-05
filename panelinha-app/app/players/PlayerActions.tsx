@@ -20,12 +20,12 @@ export default function PlayerActions({ playerId }: { playerId: string }) {
       return;
     }
 
-    router.refresh(); // atualiza a lista corretamente
+    router.refresh();
   }
 
   return (
     <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-      <a href={`/players/edit/${playerId}`}>
+      <a href={`/players/edit?id=${playerId}`}>
         <button style={btnEdit}>Editar</button>
       </a>
 
