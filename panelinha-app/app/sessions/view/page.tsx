@@ -56,6 +56,173 @@ type DayRankingRow = {
   matches: number;
 };
 
+type GeneratedTeam = {
+  players: Player[];
+  capacity: number;
+};
+
+type TeamStats = {
+  sum: number;
+  average: number;
+};
+
+function getPlayerOverall(player: Player) {
+  return player.overall ?? 0;
+}
+
+function getTeamStats(players: Player[]): TeamStats {
+  const sum = players.reduce((total, player) => total + getPlayerOverall(player), 0);
+
+  return {
+    sum,
+    average: players.length > 0 ? sum / players.length : 0,
+  };
+}
+
+function getSpread(values: number[]) {
+  if (values.length <= 1) return 0;
+
+  return Math.max(...values) - Math.min(...values);
+}
+
+function shuffleItems<T>(items: T[]) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+function getTeamGenerationScore(teams: GeneratedTeam[], playersPerTeam: number) {
+  const teamStats = teams.map((team) => getTeamStats(team.players));
+  const completeTeamStats = teams
+    .filter((team) => team.capacity === playersPerTeam)
+    .map((team) => getTeamStats(team.players));
+
+  const completeSumSpread = getSpread(completeTeamStats.map((stats) => stats.sum));
+  const averageSpread = getSpread(teamStats.map((stats) => stats.average));
+  const projectedSumSpread = getSpread(
+    teams.map((_, index) => teamStats[index].average * playersPerTeam)
+  );
+
+  const strongestPlayers = teams
+    .flatMap((team) => team.players)
+    .sort((a, b) => getPlayerOverall(b) - getPlayerOverall(a))
+    .slice(0, Math.max(teams.length, Math.ceil(teams.length * 1.5)));
+
+  const strongestByTeam = teams.map(
+    (team) =>
+      team.players.filter((player) =>
+        strongestPlayers.some((strongPlayer) => strongPlayer.id === player.id)
+      ).length
+  );
+
+  const strongConcentrationPenalty = strongestByTeam.reduce(
+    (total, count) => total + count * count,
+    0
+  );
+
+  const incompleteTeam = teams.find((team) => team.capacity < playersPerTeam);
+  const completeAverage =
+    completeTeamStats.length > 0
+      ? completeTeamStats.reduce((total, stats) => total + stats.average, 0) /
+        completeTeamStats.length
+      : 0;
+  const incompleteAverage = incompleteTeam
+    ? getTeamStats(incompleteTeam.players).average
+    : completeAverage;
+  const weakIncompletePenalty = incompleteTeam
+    ? Math.max(0, completeAverage - incompleteAverage) * 2
+    : 0;
+
+  return (
+    completeSumSpread * 3 +
+    averageSpread * 4 +
+    projectedSumSpread * 2 +
+    strongConcentrationPenalty +
+    weakIncompletePenalty
+  );
+}
+
+function buildBalancedTeams(players: Player[], playersPerTeam: number) {
+  const completeTeamsCount = Math.floor(players.length / playersPerTeam);
+  const remainder = players.length % playersPerTeam;
+  const teamCapacities = [
+    ...Array.from({ length: completeTeamsCount }, () => playersPerTeam),
+    ...(remainder > 0 ? [remainder] : []),
+  ];
+
+  const candidates = Array.from({ length: 700 }, () => {
+    const orderedPlayers = shuffleItems(players).sort((a, b) => {
+      const overallDifference = getPlayerOverall(b) - getPlayerOverall(a);
+      return overallDifference !== 0 ? overallDifference : Math.random() - 0.5;
+    });
+
+    const teams: GeneratedTeam[] = teamCapacities.map((capacity) => ({
+      players: [],
+      capacity,
+    }));
+
+    orderedPlayers.forEach((player) => {
+      const availableTeams = teams.filter(
+        (team) => team.players.length < team.capacity
+      );
+
+      const scoredTeams = availableTeams
+        .map((team) => {
+          const nextPlayers = [...team.players, player];
+          const nextStats = getTeamStats(nextPlayers);
+          const projectedAverage = nextStats.sum / team.capacity;
+          const strongPlayersOnTeam = nextPlayers.filter(
+            (teamPlayer) => getPlayerOverall(teamPlayer) >= getPlayerOverall(player)
+          ).length;
+
+          return {
+            team,
+            score:
+              projectedAverage * 10 +
+              strongPlayersOnTeam * 1.5 +
+              Math.random() * 1.25,
+          };
+        })
+        .sort((a, b) => a.score - b.score);
+
+      scoredTeams[0].team.players.push(player);
+    });
+
+    return {
+      teams,
+      score: getTeamGenerationScore(teams, playersPerTeam),
+    };
+  }).sort((a, b) => a.score - b.score);
+
+  const bestCandidates = candidates.slice(0, Math.min(12, candidates.length));
+  const chosenCandidate =
+    bestCandidates[Math.floor(Math.random() * bestCandidates.length)] ||
+    candidates[0];
+
+  const completeTeams = chosenCandidate.teams.filter(
+    (team) => team.capacity === playersPerTeam
+  );
+  const incompleteTeam = chosenCandidate.teams.find(
+    (team) => team.capacity < playersPerTeam
+  );
+
+  if (incompleteTeam) {
+    const completeAverages = completeTeams.map(
+      (team) => getTeamStats(team.players).average
+    );
+    const completeAverage =
+      completeAverages.reduce((total, average) => total + average, 0) /
+      completeAverages.length;
+    const incompleteAverage = getTeamStats(incompleteTeam.players).average;
+
+    if (incompleteAverage < completeAverage) {
+      completeTeams.forEach((team) => {
+        team.players.sort((a, b) => getPlayerOverall(b) - getPlayerOverall(a));
+      });
+    }
+  }
+
+  return [...shuffleItems(completeTeams), ...(incompleteTeam ? [incompleteTeam] : [])];
+}
+
 function SessionViewContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("id");
@@ -414,14 +581,11 @@ function SessionViewContent() {
       return;
     }
 
-    const presentLinePlayers = players.filter(
-      (player) =>
-        attendance[player.id] &&
-        !leftEarly[player.id] &&
-        player.role === "line"
+    const presentAvailablePlayers = players.filter(
+      (player) => attendance[player.id] && !leftEarly[player.id]
     );
 
-    if (presentLinePlayers.length < session.line_players_per_team * 2) {
+    if (presentAvailablePlayers.length < session.line_players_per_team * 2) {
       setMessage(
         "É necessário ter jogadores suficientes para formar pelo menos 2 times completos."
       );
@@ -429,21 +593,8 @@ function SessionViewContent() {
     }
 
     const playersPerTeam = session.line_players_per_team;
-
-    const shuffledPlayers = [...presentLinePlayers].sort(
-      () => Math.random() - 0.5
-    );
-
-    const sortedPlayers = shuffledPlayers.sort(
-      (a, b) => (b.overall ?? 0) - (a.overall ?? 0)
-    );
-
-    const queueOrder: Player[] = [];
-
-    while (sortedPlayers.length > 0) {
-      const team = sortedPlayers.splice(0, playersPerTeam);
-      queueOrder.push(...team);
-    }
+    const generatedTeams = buildBalancedTeams(presentAvailablePlayers, playersPerTeam);
+    const queueOrder = generatedTeams.flatMap((team) => team.players);
 
     await saveQueue(queueOrder.map((player) => player.id));
 
@@ -1285,9 +1436,14 @@ function TeamCard({
   onLeftEarly: (playerId: string) => void;
   onSelectPlayer: (player: Player) => void;
 }) {
+  const stats = getTeamStats(players);
+
   return (
     <div style={teamCardStyle}>
       <h3 style={{ marginTop: 0, color: "#b71c1c" }}>{title}</h3>
+      <div style={teamStatsStyle}>
+        Soma {stats.sum} • Média {players.length > 0 ? stats.average.toFixed(1) : "-"}
+      </div>
 
       {players.length === 0 ? (
         <p style={{ color: "#777" }}>Vazio</p>
@@ -1687,6 +1843,14 @@ const teamCardStyle: React.CSSProperties = {
   border: "1px solid #ffd54f",
   borderRadius: 14,
   padding: 14,
+};
+
+const teamStatsStyle: React.CSSProperties = {
+  color: "#5d4037",
+  fontSize: 13,
+  fontWeight: 900,
+  marginTop: -6,
+  marginBottom: 12,
 };
 
 const teamPlayerButtonStyle: React.CSSProperties = {
