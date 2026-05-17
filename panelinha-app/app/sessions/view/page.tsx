@@ -15,6 +15,8 @@ type Player = {
   intensity: number | null;
   overall: number | null;
   photo_url: string | null;
+  is_session_guest?: boolean;
+  guest_level?: GuestLevel;
 };
 
 type Session = {
@@ -64,6 +66,22 @@ type GeneratedTeam = {
 type TeamStats = {
   sum: number;
   average: number;
+};
+
+type GenerationMode = "balanced" | "arrival_direct" | "arrival_alternated";
+
+type GuestLevel = "weak" | "medium" | "strong";
+
+const generationModeLabels: Record<GenerationMode, string> = {
+  balanced: "Aleatório equilibrado",
+  arrival_direct: "Ordem de chegada direta",
+  arrival_alternated: "Ordem de chegada alternada",
+};
+
+const guestLevelOverall: Record<GuestLevel, number> = {
+  weak: 2,
+  medium: 3,
+  strong: 4,
 };
 
 function getPlayerOverall(player: Player) {
@@ -223,19 +241,57 @@ function buildBalancedTeams(players: Player[], playersPerTeam: number) {
   return [...shuffleItems(completeTeams), ...(incompleteTeam ? [incompleteTeam] : [])];
 }
 
+function buildDirectArrivalTeams(players: Player[], playersPerTeam: number) {
+  const teams: GeneratedTeam[] = [];
+
+  for (let i = 0; i < players.length; i += playersPerTeam) {
+    teams.push({
+      players: players.slice(i, i + playersPerTeam),
+      capacity: Math.min(playersPerTeam, players.length - i),
+    });
+  }
+
+  return teams;
+}
+
+function buildAlternatedArrivalTeams(players: Player[], playersPerTeam: number) {
+  const teamA = players.filter((_, index) => index < playersPerTeam * 2 && index % 2 === 0);
+  const teamB = players.filter((_, index) => index < playersPerTeam * 2 && index % 2 === 1);
+  const remainingPlayers = players.slice(playersPerTeam * 2);
+
+  return [
+    { players: teamA, capacity: playersPerTeam },
+    { players: teamB, capacity: playersPerTeam },
+    ...buildDirectArrivalTeams(remainingPlayers, playersPerTeam),
+  ].filter((team) => team.players.length > 0);
+}
+
+function normalizeSearchValue(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function SessionViewContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("id");
 
   const [session, setSession] = useState<Session | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [sessionGuests, setSessionGuests] = useState<Player[]>([]);
   const [attendance, setAttendance] = useState<Record<string, boolean>>({});
+  const [attendanceOrderIds, setAttendanceOrderIds] = useState<string[]>([]);
   const [leftEarly, setLeftEarly] = useState<Record<string, boolean>>({});
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queueOrderIds, setQueueOrderIds] = useState<string[]>([]);
   const [points, setPoints] = useState<PointRow[]>([]);
   const [latePlayerId, setLatePlayerId] = useState("");
   const [quickGuestName, setQuickGuestName] = useState("");
-  const [quickGuestNickname, setQuickGuestNickname] = useState("");
+  const [quickGuestLevel, setQuickGuestLevel] = useState<GuestLevel>("medium");
+  const [presenceSearch, setPresenceSearch] = useState("");
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("balanced");
   const [showDrawOptions, setShowDrawOptions] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [matchCount, setMatchCount] = useState(0);
@@ -249,6 +305,51 @@ function SessionViewContent() {
   useEffect(() => {
     loadData();
   }, [sessionId]);
+
+  function getSessionStorageKey(key: string) {
+    return `panelinha:${key}:${sessionId}`;
+  }
+
+  function loadSessionGuestsFromStorage() {
+    if (!sessionId || typeof window === "undefined") return [];
+
+    const rawGuests = window.localStorage.getItem(getSessionStorageKey("guests"));
+    if (!rawGuests) return [];
+
+    try {
+      return JSON.parse(rawGuests) as Player[];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveSessionGuestsToStorage(guests: Player[]) {
+    if (!sessionId || typeof window === "undefined") return;
+
+    window.localStorage.setItem(
+      getSessionStorageKey("guests"),
+      JSON.stringify(guests)
+    );
+  }
+
+  function loadIdListFromStorage(key: string) {
+    if (!sessionId || typeof window === "undefined") return [];
+
+    const rawIds = window.localStorage.getItem(getSessionStorageKey(key));
+    if (!rawIds) return [];
+
+    try {
+      return JSON.parse(rawIds) as string[];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveIdListToStorage(key: string, ids: string[]) {
+    if (!sessionId || typeof window === "undefined") return;
+
+    window.localStorage.setItem(getSessionStorageKey(key), JSON.stringify(ids));
+  }
 
   useEffect(() => {
     if (!isTimerRunning) return;
@@ -322,9 +423,23 @@ function SessionViewContent() {
       .select("id, session_id, match_id, player_id, points, result, created_at")
       .eq("session_id", sessionId);
 
+    const storedGuests = loadSessionGuestsFromStorage();
+    const storedAttendanceOrder = loadIdListFromStorage("attendance-order");
+    const storedQueueOrder = loadIdListFromStorage("queue-order");
+    const storedLeftEarlyGuests = loadIdListFromStorage("left-early-guests");
+    const validPlayerIds = new Set([
+      ...(playersData || []).map((player) => player.id),
+      ...storedGuests.map((guest) => guest.id),
+    ]);
+
     setSession(sessionData);
     setPlayers(playersData || []);
+    setSessionGuests(storedGuests);
+    setAttendanceOrderIds(
+      storedAttendanceOrder.filter((playerId) => validPlayerIds.has(playerId))
+    );
     setQueue(queueData || []);
+    setQueueOrderIds(storedQueueOrder.filter((playerId) => validPlayerIds.has(playerId)));
     setMatchCount(matchesData?.length || 0);
     setPoints(pointsData || []);
 
@@ -334,6 +449,11 @@ function SessionViewContent() {
     attendanceData?.forEach((item) => {
       presenceMap[item.player_id] = item.status === "present";
       leftEarlyMap[item.player_id] = !!item.left_early;
+    });
+
+    storedGuests.forEach((guest) => {
+      presenceMap[guest.id] = true;
+      leftEarlyMap[guest.id] = storedLeftEarlyGuests.includes(guest.id);
     });
 
     setAttendance(presenceMap);
@@ -353,6 +473,8 @@ function SessionViewContent() {
     if (!sessionId) return;
 
     const nextMatchNumber = matchCount + 1;
+    const officialTeamA = teamA.filter((player) => !player.is_session_guest);
+    const officialTeamB = teamB.filter((player) => !player.is_session_guest);
 
     const { data: matchData, error: matchError } = await supabase
       .from("session_matches")
@@ -360,8 +482,8 @@ function SessionViewContent() {
         session_id: sessionId,
         match_number: nextMatchNumber,
         result,
-        team_a_player_ids: teamA.map((player) => player.id),
-        team_b_player_ids: teamB.map((player) => player.id),
+        team_a_player_ids: officialTeamA.map((player) => player.id),
+        team_b_player_ids: officialTeamB.map((player) => player.id),
       })
       .select()
       .single();
@@ -372,14 +494,14 @@ function SessionViewContent() {
     }
 
     const pointRows = [
-      ...teamA.map((player) => ({
+      ...officialTeamA.map((player) => ({
         session_id: sessionId,
         match_id: matchData.id,
         player_id: player.id,
         points: result === "A" ? 3 : result === "DRAW" ? 1 : 0,
         result: result === "A" ? "WIN" : result === "DRAW" ? "DRAW" : "LOSS",
       })),
-      ...teamB.map((player) => ({
+      ...officialTeamB.map((player) => ({
         session_id: sessionId,
         match_id: matchData.id,
         player_id: player.id,
@@ -388,13 +510,15 @@ function SessionViewContent() {
       })),
     ];
 
-    const { error: pointsError } = await supabase
-      .from("player_match_points")
-      .insert(pointRows);
+    if (pointRows.length > 0) {
+      const { error: pointsError } = await supabase
+        .from("player_match_points")
+        .insert(pointRows);
 
-    if (pointsError) {
-      setMessage(`Erro ao registrar pontuação: ${pointsError.message}`);
-      return;
+      if (pointsError) {
+        setMessage(`Erro ao registrar pontuação: ${pointsError.message}`);
+        return;
+      }
     }
 
     setMatchCount(nextMatchNumber);
@@ -419,6 +543,8 @@ function SessionViewContent() {
       return;
     }
 
+    saveIdListToStorage("attendance-order", attendanceOrderIds);
+    saveSessionGuestsToStorage(sessionGuests);
     alert("Presença salva com sucesso!");
     await loadData();
   }
@@ -426,14 +552,19 @@ function SessionViewContent() {
   async function saveQueue(playerIds: string[]) {
     if (!sessionId || !session) return;
 
+    setQueueOrderIds(playerIds);
+    saveIdListToStorage("queue-order", playerIds);
+
     await supabase.from("session_queue").delete().eq("session_id", sessionId);
 
-    const rows = playerIds.map((playerId, index) => ({
-      session_id: sessionId,
-      player_id: playerId,
-      queue_position: index + 1,
-      origin_team_number: Math.floor(index / session.line_players_per_team) + 1,
-    }));
+    const rows = playerIds
+      .map((playerId, index) => ({
+        session_id: sessionId,
+        player_id: playerId,
+        queue_position: index + 1,
+        origin_team_number: Math.floor(index / session.line_players_per_team) + 1,
+      }))
+      .filter((row) => !row.player_id.startsWith("guest:"));
 
     if (rows.length > 0) {
       const { error } = await supabase.from("session_queue").insert(rows);
@@ -448,8 +579,14 @@ function SessionViewContent() {
   }
 
   function getQueuePlayers() {
-    return queue
-      .map((item) => players.find((player) => player.id === item.player_id))
+    const allPlayers = [...players, ...sessionGuests];
+    const orderedIds =
+      queueOrderIds.length > 0
+        ? queueOrderIds
+        : queue.map((item) => item.player_id);
+
+    return orderedIds
+      .map((playerId) => allPlayers.find((player) => player.id === playerId))
       .filter(Boolean) as Player[];
   }
 
@@ -466,27 +603,61 @@ function SessionViewContent() {
     return chunks;
   }
 
+  function getPresentAvailablePlayersInArrivalOrder() {
+    const allPlayers = [...players, ...sessionGuests];
+    const orderedPlayers = attendanceOrderIds
+      .map((playerId) => allPlayers.find((player) => player.id === playerId))
+      .filter(Boolean) as Player[];
+    const orderedIds = new Set(orderedPlayers.map((player) => player.id));
+    const remainingPresentPlayers = allPlayers.filter(
+      (player) =>
+        attendance[player.id] &&
+        !leftEarly[player.id] &&
+        !orderedIds.has(player.id)
+    );
+
+    return [...orderedPlayers, ...remainingPresentPlayers].filter(
+      (player) => attendance[player.id] && !leftEarly[player.id]
+    );
+  }
+
   async function addPlayerToQueue(playerId: string) {
     if (!sessionId) return;
 
-    const alreadyInQueue = queue.some((item) => item.player_id === playerId);
+    const alreadyInQueue = getQueuePlayers().some((player) => player.id === playerId);
 
     if (alreadyInQueue) {
       setMessage("Esse jogador já está na lista geral.");
       return;
     }
 
-    await supabase.from("session_attendance").upsert(
-      {
-        session_id: sessionId,
-        player_id: playerId,
-        status: "present",
-        left_early: false,
-      },
-      {
-        onConflict: "session_id,player_id",
-      }
-    );
+    if (!playerId.startsWith("guest:")) {
+      await supabase.from("session_attendance").upsert(
+        {
+          session_id: sessionId,
+          player_id: playerId,
+          status: "present",
+          left_early: false,
+        },
+        {
+          onConflict: "session_id,player_id",
+        }
+      );
+    }
+
+    setAttendance((current) => ({ ...current, [playerId]: true }));
+    setLeftEarly((current) => ({ ...current, [playerId]: false }));
+    if (playerId.startsWith("guest:")) {
+      const nextLeftEarlyGuests = loadIdListFromStorage("left-early-guests").filter(
+        (guestId) => guestId !== playerId
+      );
+      saveIdListToStorage("left-early-guests", nextLeftEarlyGuests);
+    }
+    setAttendanceOrderIds((current) => {
+      const next = current.includes(playerId) ? current : [...current, playerId];
+      saveIdListToStorage("attendance-order", next);
+      return next;
+    });
 
     const currentQueue = getQueuePlayers().map((player) => player.id);
 
@@ -508,60 +679,77 @@ function SessionViewContent() {
     if (!session) return;
 
     const name = quickGuestName.trim();
-    const nickname = quickGuestNickname.trim() || name;
+    const normalizedName = normalizeSearchValue(name);
 
     if (!name) {
       setMessage("Informe o nome do convidado.");
       return;
     }
 
-    const { data, error } = await supabase
-      .from("players")
-      .insert({
-        group_id: session.group_id,
-        name,
-        nickname,
-        role: "line",
-        participation: "guest",
-        attack: null,
-        defense: null,
-        intensity: null,
-        active: true,
-      })
-      .select()
-      .single();
+    const guestAlreadyExists = sessionGuests.some(
+      (guest) => normalizeSearchValue(guest.nickname) === normalizedName
+    );
 
-    if (error || !data) {
-      setMessage(`Erro ao criar convidado: ${error?.message}`);
+    if (guestAlreadyExists) {
+      setMessage("Esse convidado já foi adicionado neste horário.");
       return;
     }
 
+    const guest: Player = {
+      id: `guest:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      nickname: name,
+      role: "line",
+      participation: "guest",
+      attack: null,
+      defense: null,
+      intensity: null,
+      overall: guestLevelOverall[quickGuestLevel],
+      photo_url: null,
+      is_session_guest: true,
+      guest_level: quickGuestLevel,
+    };
+
+    const nextGuests = [...sessionGuests, guest];
+    setSessionGuests(nextGuests);
+    saveSessionGuestsToStorage(nextGuests);
     setQuickGuestName("");
-    setQuickGuestNickname("");
-    await addPlayerToQueue(data.id);
+    setQuickGuestLevel("medium");
+    await addPlayerToQueue(guest.id);
   }
 
   async function handlePlayerLeftEarly(playerId: string) {
     if (!sessionId) return;
 
-    const player = players.find((item) => item.id === playerId);
+    const player = [...players, ...sessionGuests].find((item) => item.id === playerId);
     const confirmLeave = confirm(
       `Confirmar que ${player?.nickname || "este jogador"} foi embora mais cedo?`
     );
 
     if (!confirmLeave) return;
 
-    await supabase.from("session_attendance").upsert(
-      {
-        session_id: sessionId,
-        player_id: playerId,
-        status: "present",
-        left_early: true,
-      },
-      {
-        onConflict: "session_id,player_id",
-      }
-    );
+    if (!playerId.startsWith("guest:")) {
+      await supabase.from("session_attendance").upsert(
+        {
+          session_id: sessionId,
+          player_id: playerId,
+          status: "present",
+          left_early: true,
+        },
+        {
+          onConflict: "session_id,player_id",
+        }
+      );
+    }
+
+    setLeftEarly((current) => ({ ...current, [playerId]: true }));
+    if (playerId.startsWith("guest:")) {
+      const currentLeftEarlyGuests = loadIdListFromStorage("left-early-guests");
+      const nextLeftEarlyGuests = currentLeftEarlyGuests.includes(playerId)
+        ? currentLeftEarlyGuests
+        : [...currentLeftEarlyGuests, playerId];
+      saveIdListToStorage("left-early-guests", nextLeftEarlyGuests);
+    }
 
     const updatedQueue = getQueuePlayers()
       .filter((player) => player.id !== playerId)
@@ -581,9 +769,7 @@ function SessionViewContent() {
       return;
     }
 
-    const presentAvailablePlayers = players.filter(
-      (player) => attendance[player.id] && !leftEarly[player.id]
-    );
+    const presentAvailablePlayers = getPresentAvailablePlayersInArrivalOrder();
 
     if (presentAvailablePlayers.length < session.line_players_per_team * 2) {
       setMessage(
@@ -593,7 +779,12 @@ function SessionViewContent() {
     }
 
     const playersPerTeam = session.line_players_per_team;
-    const generatedTeams = buildBalancedTeams(presentAvailablePlayers, playersPerTeam);
+    const generatedTeams =
+      generationMode === "balanced"
+        ? buildBalancedTeams(presentAvailablePlayers, playersPerTeam)
+        : generationMode === "arrival_direct"
+        ? buildDirectArrivalTeams(presentAvailablePlayers, playersPerTeam)
+        : buildAlternatedArrivalTeams(presentAvailablePlayers, playersPerTeam);
     const queueOrder = generatedTeams.flatMap((team) => team.players);
 
     await saveQueue(queueOrder.map((player) => player.id));
@@ -605,7 +796,9 @@ function SessionViewContent() {
       })
       .eq("id", sessionId);
 
-    setMessage("Times e lista geral gerados com sucesso!");
+    setMessage(
+      `Times e lista geral gerados com sucesso: ${generationModeLabels[generationMode]}.`
+    );
     await loadData();
   }
 
@@ -878,7 +1071,8 @@ function SessionViewContent() {
     alreadySpokeRef.current = false;
   }
 
-  const presentPlayers = players.filter((player) => attendance[player.id]);
+  const allPlayers = [...players, ...sessionGuests];
+  const presentPlayers = allPlayers.filter((player) => attendance[player.id]);
 
   const linePresentPlayers = presentPlayers.filter(
     (player) => player.role === "line"
@@ -900,9 +1094,19 @@ function SessionViewContent() {
 
   const hasTwoCompleteOutsideTeams = completeOutsideTeamsCount >= 2;
 
-  const lateOptions = players.filter((player) => {
-    const alreadyInQueue = queue.some((item) => item.player_id === player.id);
+  const lateOptions = allPlayers.filter((player) => {
+    const alreadyInQueue = getQueuePlayers().some((item) => item.id === player.id);
     return !alreadyInQueue;
+  });
+
+  const filteredPlayers = allPlayers.filter((player) => {
+    const normalizedPresenceSearch = normalizeSearchValue(presenceSearch);
+    if (!normalizedPresenceSearch) return true;
+
+    return (
+      normalizeSearchValue(player.name).includes(normalizedPresenceSearch) ||
+      normalizeSearchValue(player.nickname).includes(normalizedPresenceSearch)
+    );
   });
 
   const dayRanking = useMemo(() => {
@@ -1040,7 +1244,7 @@ function SessionViewContent() {
             <Badge label={`Presentes: ${presentPlayers.length}`} />
             <Badge label={`Linha: ${linePresentPlayers.length}`} />
             <Badge label={`Goleiros: ${goalkeeperPresentPlayers.length}`} />
-            <Badge label={`Lista geral: ${queue.length}`} />
+            <Badge label={`Lista geral: ${queuePlayers.length}`} />
             <Badge label={`Gerações: ${session.teams_generated_count}/1`} />
             <Badge label={`Partidas: ${matchCount}`} />
           </div>
@@ -1212,7 +1416,11 @@ function SessionViewContent() {
               {lateOptions.map((player) => (
                 <option key={player.id} value={player.id}>
                   {player.nickname} - {player.role === "line" ? "Linha" : "Goleiro"} -{" "}
-                  {player.participation === "official" ? "Oficial" : "Convidado"}
+                  {player.is_session_guest
+                    ? "Convidado avulso"
+                    : player.participation === "official"
+                    ? "Oficial"
+                    : "Convidado"}
                   {leftEarly[player.id] ? " - foi embora" : ""}
                 </option>
               ))}
@@ -1223,35 +1431,6 @@ function SessionViewContent() {
             </button>
           </div>
 
-          <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #ffe082" }}>
-            <h3 style={{ color: "#b71c1c", marginTop: 0 }}>Criar convidado rápido</h3>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <input
-                value={quickGuestName}
-                onChange={(e) => setQuickGuestName(e.target.value)}
-                disabled={isFinished}
-                placeholder="Nome do convidado"
-                style={inputStyle}
-              />
-
-              <input
-                value={quickGuestNickname}
-                onChange={(e) => setQuickGuestNickname(e.target.value)}
-                disabled={isFinished}
-                placeholder="Apelido do convidado"
-                style={inputStyle}
-              />
-            </div>
-
-            <button
-              onClick={createQuickGuestAndAddLate}
-              disabled={isFinished}
-              style={{ ...primaryButton, marginTop: 12 }}
-            >
-              Criar convidado e adicionar
-            </button>
-          </div>
         </section>
 
         <section style={cardStyle}>
@@ -1262,13 +1441,26 @@ function SessionViewContent() {
             A geração é limitada para evitar manipulação dos times.
           </p>
 
-          <button
-            onClick={generateTeamsAndQueue}
-            disabled={isFinished || session.teams_generated_count >= 1}
-            style={primaryButton}
-          >
-            Gerar times e lista geral
-          </button>
+          <div style={generationControlsStyle}>
+            <select
+              value={generationMode}
+              onChange={(e) => setGenerationMode(e.target.value as GenerationMode)}
+              disabled={isFinished || session.teams_generated_count >= 1}
+              style={inputStyle}
+            >
+              <option value="balanced">Aleatório equilibrado</option>
+              <option value="arrival_direct">Ordem de chegada direta</option>
+              <option value="arrival_alternated">Ordem de chegada alternada</option>
+            </select>
+
+            <button
+              onClick={generateTeamsAndQueue}
+              disabled={isFinished || session.teams_generated_count >= 1}
+              style={primaryButton}
+            >
+              Gerar times e lista geral
+            </button>
+          </div>
         </section>
 
         <section style={cardStyle}>
@@ -1293,6 +1485,7 @@ function SessionViewContent() {
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                     <span style={{ color: "#777" }}>
                       {player.role === "line" ? "Linha" : "Goleiro"}
+                      {player.is_session_guest ? " • Convidado" : ""}
                     </span>
 
                     <button
@@ -1323,8 +1516,49 @@ function SessionViewContent() {
             </button>
           </div>
 
+          <div style={guestPanelStyle}>
+            <h3 style={{ color: "#b71c1c", marginTop: 0 }}>Adicionar convidado</h3>
+
+            <div style={guestFormStyle}>
+              <input
+                value={quickGuestName}
+                onChange={(e) => setQuickGuestName(e.target.value)}
+                disabled={isFinished}
+                placeholder="Nome ou apelido do convidado"
+                style={inputStyle}
+              />
+
+              <select
+                value={quickGuestLevel}
+                onChange={(e) => setQuickGuestLevel(e.target.value as GuestLevel)}
+                disabled={isFinished}
+                style={inputStyle}
+              >
+                <option value="weak">Fraco</option>
+                <option value="medium">Médio</option>
+                <option value="strong">Forte</option>
+              </select>
+
+              <button
+                onClick={createQuickGuestAndAddLate}
+                disabled={isFinished}
+                style={primaryButton}
+              >
+                Adicionar convidado
+              </button>
+            </div>
+          </div>
+
+          <input
+            value={presenceSearch}
+            onChange={(e) => setPresenceSearch(e.target.value)}
+            disabled={isFinished}
+            placeholder="Buscar por nome ou apelido"
+            style={{ ...inputStyle, width: "100%", marginBottom: 16 }}
+          />
+
           <div style={playersGridStyle}>
-            {players.map((player) => {
+            {filteredPlayers.map((player) => {
               const isPresent = !!attendance[player.id];
               const hasLeftEarly = !!leftEarly[player.id];
 
@@ -1339,11 +1573,28 @@ function SessionViewContent() {
                       [player.id]: !current[player.id],
                     }));
 
+                    setAttendanceOrderIds((current) => {
+                      if (current.includes(player.id)) return current;
+
+                      const next = [...current, player.id];
+                      saveIdListToStorage("attendance-order", next);
+                      return next;
+                    });
+
                     if (hasLeftEarly) {
                       setLeftEarly((current) => ({
                         ...current,
                         [player.id]: false,
                       }));
+                      if (player.is_session_guest) {
+                        const nextLeftEarlyGuests = loadIdListFromStorage(
+                          "left-early-guests"
+                        ).filter((guestId) => guestId !== player.id);
+                        saveIdListToStorage(
+                          "left-early-guests",
+                          nextLeftEarlyGuests
+                        );
+                      }
                     }
                   }}
                   style={{
@@ -1401,7 +1652,11 @@ function SessionViewContent() {
 
                   <div style={{ marginTop: 12, color: "#555", fontSize: 14 }}>
                     {player.role === "line" ? "Linha" : "Goleiro"} •{" "}
-                    {player.participation === "official" ? "Oficial" : "Convidado"}
+                    {player.is_session_guest
+                      ? "Convidado avulso"
+                      : player.participation === "official"
+                      ? "Oficial"
+                      : "Convidado"}
                     {player.overall ? ` • Nível ${player.overall}` : ""}
                   </div>
                 </div>
@@ -1466,6 +1721,7 @@ function TeamCard({
               <PlayerAvatar player={player} size={32} />
               <span>
                 {index + 1}. {player.nickname} — nível {player.overall ?? "-"}
+                {player.is_session_guest ? " • Convidado" : ""}
               </span>
             </button>
 
@@ -1603,7 +1859,13 @@ function PlayerProfileModal({
             >
               <ProfileBadge label={player.role === "line" ? "Linha" : "Goleiro"} />
               <ProfileBadge
-                label={player.participation === "official" ? "Oficial" : "Convidado"}
+                label={
+                  player.is_session_guest
+                    ? "Convidado avulso"
+                    : player.participation === "official"
+                    ? "Oficial"
+                    : "Convidado"
+                }
               />
               <ProfileBadge
                 label={hasLeftEarly ? "Foi embora" : isPresent ? "Presente" : "Ausente"}
@@ -1800,6 +2062,29 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 12,
   border: "1px solid #ddd",
   fontSize: 15,
+};
+
+const generationControlsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 12,
+  flexWrap: "wrap",
+  alignItems: "center",
+  marginTop: 16,
+};
+
+const guestPanelStyle: React.CSSProperties = {
+  background: "#fff8e1",
+  border: "1px solid #ffd54f",
+  borderRadius: 14,
+  padding: 16,
+  marginBottom: 16,
+};
+
+const guestFormStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: 12,
+  alignItems: "center",
 };
 
 const badgeStyle: React.CSSProperties = {
